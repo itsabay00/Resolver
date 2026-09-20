@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search, History as HistoryIcon } from "lucide-react";
+import { MagnifyingGlass, ClockCounterClockwise } from "@phosphor-icons/react";
 import { colors } from "../lib/colors.js";
 import { EmptyState } from "./ui.jsx";
 import { CaseCard } from "./CaseListView.jsx";
@@ -15,11 +15,11 @@ export default function HistoryView({ cases, selectedCaseId, onSelectCase }) {
 
   return (
     <div>
-      <h2 className="text-base font-semibold mb-4" style={{ color: colors.black }}>History</h2>
+      <h2 className="text-base font-medium mb-4" style={{ color: colors.black }}>History</h2>
 
       <div className="relative mb-5">
         <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
-          <Search className="w-4 h-4" style={{ color: colors.gray }} />
+          <MagnifyingGlass className="w-4 h-4" style={{ color: colors.gray }} />
         </div>
         <input
           value={search}
@@ -31,7 +31,7 @@ export default function HistoryView({ cases, selectedCaseId, onSelectCase }) {
 
       {filtered.length === 0 ? (
         <EmptyState
-          icon={HistoryIcon}
+          icon={ClockCounterClockwise}
           title={cases.length === 0 ? "No cases yet" : "No matches"}
           description={cases.length === 0 ? "Cases you start will show up here." : "Try a different search term."}
         />
