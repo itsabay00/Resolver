@@ -53,9 +53,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { system, prompt, maxTokens } = req.body || {};
-  if (!prompt) {
-    res.status(400).json({ error: "Missing prompt", code: "bad_request" });
+  const { system, messages, maxTokens } = req.body || {};
+  if (!Array.isArray(messages) || messages.length === 0) {
+    res.status(400).json({ error: "Missing messages", code: "bad_request" });
     return;
   }
 
@@ -71,7 +71,7 @@ export default async function handler(req, res) {
         model: "claude-sonnet-5",
         max_tokens: maxTokens || 1000,
         system: system || undefined,
-        messages: [{ role: "user", content: prompt }],
+        messages,
       }),
     });
 
