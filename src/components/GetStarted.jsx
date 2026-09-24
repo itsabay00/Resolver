@@ -37,7 +37,7 @@ export default function GetStarted({ onStart }) {
       </div>
 
       <button onClick={onStart} className="text-sm font-normal underline mt-6" style={{ color: colors.ink }}>
-        Start a case →
+        Get your first case →
       </button>
     </div>
   );

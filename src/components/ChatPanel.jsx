@@ -1,36 +1,57 @@
 import { useState, useRef, useEffect } from "react";
-import { ArrowClockwise, Plus, At, Paperclip, ArrowUp, Info, ChatsCircle, Copy, Check } from "@phosphor-icons/react";
+import { ArrowClockwise, Plus, At, Paperclip, ArrowUp, Info, ChatsCircle, Copy, Check, X, EnvelopeSimple } from "@phosphor-icons/react";
 import { colors, semantic } from "../lib/colors.js";
-import { OutlinePill, GhostButton, Banner, EmptyState } from "./ui.jsx";
+import { OutlinePill, GhostButton, PrimaryButton, Banner, EmptyState } from "./ui.jsx";
 
 const QUICK_PROMPTS = ["More empathetic", "More concise", "More formal", "What policy applies here?"];
 const STATUS_OPTIONS = ["New", "Transferred", "Waiting for Customer", "Closed"];
 
 function Bubble({ role, content }) {
   const isUser = role === "user";
+  const isArray = Array.isArray(content);
+  const text = isArray ? content.find((b) => b.type === "text")?.text || "" : content;
+  const image = isArray ? content.find((b) => b.type === "image") : null;
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
         className="max-w-[85%] rounded-lg px-4 py-3 text-sm whitespace-pre-wrap"
         style={isUser ? { backgroundColor: colors.black, color: colors.white } : { backgroundColor: colors.lightGray, color: colors.ink }}
       >
-        {content}
+        {image && <img src={`data:${image.mediaType};base64,${image.data}`} alt="Attachment" className="rounded-md mb-2 max-h-40" />}
+        {text}
       </div>
     </div>
   );
 }
 
-export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefresh, onNewCase, resizeHandleProps }) {
+export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefresh, onNewCase, onSendEmail, onUpdateCustomerEmail, resizeHandleProps }) {
   const [input, setInput] = useState("");
+  const [pendingImage, setPendingImage] = useState(null);
   const [sending, setSending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailTo, setEmailTo] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBody, setEmailBody] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailError, setEmailError] = useState(null);
+  const [emailSent, setEmailSent] = useState(false);
   const scrollRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     setInput("");
     setError(null);
+    setPendingImage(null);
+    setEmailOpen(false);
+    setEmailError(null);
+    setEmailSent(false);
+    if (item) {
+      setEmailTo(item.customerEmail || "");
+      setEmailSubject(item.category ? `Re: ${item.category}` : "Re: your inquiry");
+    }
   }, [item?.id]);
 
   useEffect(() => {
@@ -39,14 +60,24 @@ export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefre
     }
   }, [item?.chat?.length, sending]);
 
+  // A freshly pulled case starts with an empty chat — prepare it automatically
+  // rather than making the advisor ask for a first draft.
+  useEffect(() => {
+    if (item && item.chat && item.chat.length === 0 && !refreshing) {
+      handleRefreshClick();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id, item?.chat?.length]);
+
   async function handleSend(text) {
     const value = (text ?? input).trim();
-    if (!value || sending || !item) return;
+    if ((!value && !pendingImage) || sending || !item) return;
     setSending(true);
     setError(null);
     try {
-      await onSendMessage(item.id, value);
+      await onSendMessage(item.id, value, pendingImage);
       setInput("");
+      setPendingImage(null);
     } catch (err) {
       setError(err.message || "Something went wrong. Try again.");
     } finally {
@@ -61,7 +92,7 @@ export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefre
     try {
       await onRefresh(item.id);
     } catch (err) {
-      setError(err.message || "Couldn't refresh this case. Try again.");
+      setError(err.message || "Couldn't prepare this case. Try again.");
     } finally {
       setRefreshing(false);
     }
@@ -79,13 +110,48 @@ export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefre
     }
   }
 
+  function handleFileChange(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file || !file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = String(reader.result).split(",")[1];
+      setPendingImage({ mediaType: file.type, data: base64, name: file.name });
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function openEmailPanel() {
+    const lastAssistant = [...(item?.chat || [])].reverse().find((m) => m.role === "assistant" && !m.hidden);
+    setEmailBody(lastAssistant ? (Array.isArray(lastAssistant.content) ? lastAssistant.content.find((b) => b.type === "text")?.text || "" : lastAssistant.content) : "");
+    setEmailError(null);
+    setEmailSent(false);
+    setEmailOpen(true);
+  }
+
+  async function handleSendEmailClick() {
+    if (!emailTo.trim() || !emailBody.trim() || emailSending) return;
+    setEmailSending(true);
+    setEmailError(null);
+    try {
+      await onSendEmail(item.id, { to: emailTo.trim(), subject: emailSubject.trim(), body: emailBody.trim() });
+      onUpdateCustomerEmail(item.id, emailTo.trim());
+      setEmailSent(true);
+    } catch (err) {
+      setEmailError(err.message || "Couldn't send that. Try again.");
+    } finally {
+      setEmailSending(false);
+    }
+  }
+
   const visibleMessages = (item?.chat || []).filter((m) => !m.hidden);
+  const isPreparing = item && item.chat && item.chat.length === 0 && refreshing;
 
   return (
     <div className="rsv-chat-panel relative flex flex-col h-screen" style={{ backgroundColor: colors.white }}>
       <div {...resizeHandleProps} className="hidden md:block absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-10" style={{ marginLeft: "-2px" }} />
 
-      {/* Top Navigation */}
       <div className="shrink-0 flex items-center justify-between px-[16px] py-[12px]" style={{ borderBottom: `1px solid ${colors.border}` }}>
         <p className="text-[16px] font-medium" style={{ color: colors.black }}>AI Assistant</p>
         <div className="flex items-center gap-[8px]">
@@ -98,12 +164,7 @@ export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefre
           >
             <ArrowClockwise className="w-[16px] h-[16px]" style={{ color: colors.ink }} />
           </button>
-          <button
-            onClick={onNewCase}
-            className="flex items-center justify-center w-[24px] h-[24px] rounded-full"
-            style={{ backgroundColor: colors.bg }}
-            title="Start a new case"
-          >
+          <button onClick={onNewCase} className="flex items-center justify-center w-[24px] h-[24px] rounded-full" style={{ backgroundColor: colors.bg }} title="Get the next case">
             <Plus className="w-[16px] h-[16px]" style={{ color: colors.ink }} />
           </button>
         </div>
@@ -111,7 +172,7 @@ export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefre
 
       {!item ? (
         <div className="flex-1 flex items-center justify-center">
-          <EmptyState icon={ChatsCircle} title="No case selected" description="Pick a case from the list, or start a new one." />
+          <EmptyState icon={ChatsCircle} title="No case selected" description="Get the next case, or pick one from the list." />
         </div>
       ) : (
         <>
@@ -135,10 +196,41 @@ export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefre
                 {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                 {copied ? "Copied" : "Copy last reply"}
               </GhostButton>
+              <PrimaryButton onClick={openEmailPanel} disabled={isPreparing}>
+                <EnvelopeSimple className="w-3.5 h-3.5" /> Send to customer
+              </PrimaryButton>
             </div>
           </div>
 
+          {emailOpen && (
+            <div className="shrink-0 px-[16px] py-3 flex flex-col gap-2" style={{ borderBottom: `1px solid ${colors.border}` }}>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium" style={{ color: colors.sectionGray }}>Send by email</p>
+                <button onClick={() => setEmailOpen(false)} style={{ color: colors.gray }}>
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <input value={emailTo} onChange={(e) => setEmailTo(e.target.value)} placeholder="customer@example.com" className="w-full rounded-lg p-2 text-sm rsv-input" />
+              <input value={emailSubject} onChange={(e) => setEmailSubject(e.target.value)} placeholder="Subject" className="w-full rounded-lg p-2 text-sm rsv-input" />
+              <textarea value={emailBody} onChange={(e) => setEmailBody(e.target.value)} rows={4} className="w-full rounded-lg p-2 text-sm resize-none rsv-input" />
+              {emailError && <Banner kind="error" message={emailError} />}
+              {emailSent && <Banner kind="success" message="Sent." />}
+              <div className="flex justify-end">
+                <PrimaryButton onClick={handleSendEmailClick} disabled={!emailTo.trim() || !emailBody.trim() || emailSending}>
+                  {emailSending ? "Sending…" : "Send email"}
+                </PrimaryButton>
+              </div>
+            </div>
+          )}
+
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-[16px] py-5 flex flex-col gap-3">
+            {isPreparing && (
+              <div className="flex justify-start">
+                <div className="rounded-lg px-4 py-3 text-sm" style={{ backgroundColor: colors.lightGray, color: colors.gray }}>
+                  Reading the case and preparing a response…
+                </div>
+              </div>
+            )}
             {visibleMessages.map((m, i) => (
               <Bubble key={i} role={m.role} content={m.content} />
             ))}
@@ -149,13 +241,13 @@ export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefre
                 </div>
               </div>
             )}
-            {error && <Banner kind="error" message={error} onRetry={() => handleSend(input || undefined)} />}
+            {error && <Banner kind="error" message={error} onRetry={() => (item.chat.length === 0 ? handleRefreshClick() : handleSend(input || undefined))} />}
           </div>
 
           <div className="shrink-0 px-[16px]">
             <div className="flex flex-wrap gap-2 pb-3">
               {QUICK_PROMPTS.map((p) => (
-                <GhostButton key={p} onClick={() => handleSend(p)} disabled={sending}>
+                <GhostButton key={p} onClick={() => handleSend(p)} disabled={sending || isPreparing}>
                   {p}
                 </GhostButton>
               ))}
@@ -164,16 +256,21 @@ export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefre
         </>
       )}
 
-      {/* Instructional banner + input — always shown, matches reference */}
       <div className="shrink-0 flex flex-col gap-[12px] px-[20px] pb-[10px] pt-2">
         <div className="flex items-start gap-2 rounded-lg p-[10px] w-full" style={{ backgroundColor: semantic.info.fg }}>
           <Info className="w-4 h-4 mt-0.5 shrink-0" weight="fill" style={{ color: colors.white }} />
-          <p className="text-[12px] font-normal" style={{ color: colors.white }}>
-            Give context, review responses, and send to customers.
-          </p>
+          <p className="text-[12px] font-normal" style={{ color: colors.white }}>Give context, review responses, and send to customers.</p>
         </div>
 
         <div className="rounded-lg p-[10px] min-h-[61px] flex flex-col justify-between" style={{ backgroundColor: colors.bg }}>
+          {pendingImage && (
+            <div className="flex items-center gap-2 mb-2 w-fit rounded-md px-2 py-1" style={{ backgroundColor: colors.white }}>
+              <span className="text-xs" style={{ color: colors.ink }}>{pendingImage.name}</span>
+              <button onClick={() => setPendingImage(null)}>
+                <X className="w-3 h-3" style={{ color: colors.gray }} />
+              </button>
+            </div>
+          )}
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -194,19 +291,18 @@ export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefre
               <button className="opacity-40 cursor-not-allowed" title="Mention — coming soon" disabled>
                 <At className="w-[18px] h-[18px]" style={{ color: colors.gray }} />
               </button>
-              <button className="opacity-40 cursor-not-allowed" title="Attach a file — coming soon" disabled>
-                <Paperclip className="w-[18px] h-[18px]" style={{ color: colors.gray }} />
+              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+              <button onClick={() => fileInputRef.current?.click()} disabled={!item} className="disabled:opacity-40" title="Attach an image">
+                <Paperclip className="w-[18px] h-[18px]" style={{ color: colors.ink }} />
               </button>
             </div>
-            <button onClick={() => handleSend()} disabled={!item || !input.trim() || sending} className="disabled:opacity-30" aria-label="Send">
+            <button onClick={() => handleSend()} disabled={!item || (!input.trim() && !pendingImage) || sending} className="disabled:opacity-30" aria-label="Send">
               <ArrowUp className="w-[18px] h-[18px]" style={{ color: colors.ink }} />
             </button>
           </div>
         </div>
 
-        <p className="text-[8px] font-normal text-center" style={{ color: colors.gray }}>
-          AI can make mistakes, double check for clarity.
-        </p>
+        <p className="text-[8px] font-normal text-center" style={{ color: colors.gray }}>AI can make mistakes, double check for clarity.</p>
       </div>
     </div>
   );

@@ -43,6 +43,39 @@ ${kbBlock}
 Ground any reply you draft in these knowledge-base entries when relevant. Never invent policies, refund amounts, timelines, or commitments the knowledge base or the customer's message doesn't support — say so plainly if nothing applies. When asked to draft or redraft a reply, write a complete, ready-to-send reply in a warm, professional customer-service voice. When asked a question, answer it directly and concisely. This is a working tool inside a live chat, not a companion — keep responses focused and useful, not chatty.`;
 }
 
+export function buildUserContent(text, image) {
+  if (!image) return text;
+  // Neutral shape — api/claude.js translates this into whichever provider's
+  // own image format is needed, so the frontend doesn't need to know which
+  // provider is configured.
+  return [
+    { type: "text", text: text || "(see attached image)" },
+    { type: "image", mediaType: image.mediaType, data: image.data },
+  ];
+}
+
+export async function sendEmail({ to, subject, body }) {
+  let response;
+  try {
+    response = await fetch("/api/send-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to, subject, body }),
+    });
+  } catch (networkErr) {
+    const err = new Error("Can't reach the server — check your internet connection and try again.");
+    err.code = "network";
+    throw err;
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const err = new Error(data.error || `Request failed (${response.status}). Try again.`);
+    err.code = data.code || "unknown";
+    throw err;
+  }
+  return data;
+}
+
 export function buildOpeningUserMessage() {
   return `A new case just came in. Respond with ONLY a JSON object, no markdown fences, no commentary, in exactly this shape:
 {"category": "a short 2-4 word issue category", "urgency": "Low, Medium, or High", "sentiment": "Positive, Neutral, Frustrated, or Angry", "message": "a natural reply to show the advisor in chat: briefly note the category/urgency/sentiment in a sentence, then give a complete draft reply, warm and professional, roughly 80-160 words"}`;

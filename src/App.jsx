@@ -3,7 +3,8 @@ import { List } from "@phosphor-icons/react";
 import { colors } from "./lib/colors.js";
 import { loadJSON, saveJSON } from "./lib/storage.js";
 import { getRelevantKb } from "./lib/kb.js";
-import { callClaude, buildCaseSystemPrompt, buildOpeningUserMessage, parseOpening } from "./lib/api.js";
+import { callClaude, buildCaseSystemPrompt, buildOpeningUserMessage, parseOpening, buildUserContent, sendEmail } from "./lib/api.js";
+import { SEED_CASES } from "./lib/seedCases.js";
 import Sidebar from "./components/Sidebar.jsx";
 import GetStarted from "./components/GetStarted.jsx";
 import CaseListView from "./components/CaseListView.jsx";
@@ -14,6 +15,7 @@ import ChatPanel from "./components/ChatPanel.jsx";
 
 const KB_KEY = "resolve-kb-entries";
 const CASES_KEY = "resolve-cases";
+const SEED_INDEX_KEY = "resolve-seed-index";
 const CHAT_WIDTH_KEY = "resolve-chat-width";
 const MIN_CHAT_WIDTH = 320;
 const MAX_CHAT_WIDTH = 560;
@@ -23,6 +25,7 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState(null);
   const [kb, setKb] = useState(() => loadJSON(KB_KEY, []));
   const [cases, setCases] = useState(() => loadJSON(CASES_KEY, []));
+  const [seedIndex, setSeedIndex] = useState(() => loadJSON(SEED_INDEX_KEY, 0));
   const [selectedCaseId, setSelectedCaseId] = useState(null);
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
   const [chatWidth, setChatWidth] = useState(() => loadJSON(CHAT_WIDTH_KEY, 400));
@@ -68,40 +71,58 @@ export default function App() {
     saveJSON(CASES_KEY, newCases);
   }
 
+  // The "alive" flow: pull the next simulated case instead of asking the
+  // advisor to type one in. Swap this for a real inbox/form later without
+  // touching anything downstream — everything else just reads from `cases`.
+  function handleGetNextCase() {
+    const seed = SEED_CASES[seedIndex % SEED_CASES.length];
+    const nextIndex = seedIndex + 1;
+    setSeedIndex(nextIndex);
+    saveJSON(SEED_INDEX_KEY, nextIndex);
+
+    const newCase = {
+      id: `case-${Date.now()}`,
+      message: seed.message,
+      context: seed.context,
+      customerEmail: seed.customerEmail || "",
+      category: null,
+      urgency: null,
+      sentiment: null,
+      status: "New",
+      chat: [],
+      createdAt: new Date().toISOString(),
+    };
+    updateCases([newCase, ...cases]);
+    setSelectedCaseId(newCase.id);
+    setView("cases");
+    setStatusFilter(null);
+  }
+
   async function handleCreateCase(message, context) {
-    const relevant = getRelevantKb(message, context, kb, 10);
-    const system = buildCaseSystemPrompt(message, context, relevant);
-    const openingUserMessage = buildOpeningUserMessage();
-
-    const raw = await callClaude({ system, messages: [{ role: "user", content: openingUserMessage }], maxTokens: 1000 });
-    const parsed = parseOpening(raw);
-
     const newCase = {
       id: `case-${Date.now()}`,
       message,
       context,
-      category: parsed.category,
-      urgency: parsed.urgency,
-      sentiment: parsed.sentiment,
+      customerEmail: "",
+      category: null,
+      urgency: null,
+      sentiment: null,
       status: "New",
-      chat: [
-        { role: "user", content: openingUserMessage, hidden: true },
-        { role: "assistant", content: parsed.message },
-      ],
+      chat: [],
       createdAt: new Date().toISOString(),
     };
-
     updateCases([newCase, ...cases]);
     setSelectedCaseId(newCase.id);
   }
 
-  async function handleSendMessage(caseId, userText) {
+  async function handleSendMessage(caseId, userText, image) {
     const current = cases.find((c) => c.id === caseId);
     if (!current) return;
 
     const relevant = getRelevantKb(current.message, current.context, kb, 10);
     const system = buildCaseSystemPrompt(current.message, current.context, relevant);
-    const newMessages = [...current.chat, { role: "user", content: userText }];
+    const userContent = buildUserContent(userText, image);
+    const newMessages = [...current.chat, { role: "user", content: userContent }];
 
     const raw = await callClaude({ system, messages: newMessages, maxTokens: 1000 });
 
@@ -109,6 +130,8 @@ export default function App() {
     updateCases(cases.map((c) => (c.id === caseId ? updated : c)));
   }
 
+  // Also used to auto-prepare a freshly pulled case with an empty chat —
+  // ChatPanel calls this itself the moment such a case is selected.
   async function handleRefreshCase(caseId) {
     const current = cases.find((c) => c.id === caseId);
     if (!current) return;
@@ -133,6 +156,14 @@ export default function App() {
     updateCases(cases.map((c) => (c.id === caseId ? updated : c)));
   }
 
+  async function handleSendEmail(caseId, { to, subject, body }) {
+    await sendEmail({ to, subject, body });
+  }
+
+  function handleUpdateCustomerEmail(caseId, email) {
+    updateCases(cases.map((c) => (c.id === caseId ? { ...c, customerEmail: email } : c)));
+  }
+
   function handleChangeStatus(caseId, newStatus) {
     updateCases(cases.map((c) => (c.id === caseId ? { ...c, status: newStatus } : c)));
   }
@@ -154,12 +185,6 @@ export default function App() {
     setView("cases");
     setStatusFilter(status);
     setSelectedCaseId(null);
-  }
-
-  function handleNewCase() {
-    setSelectedCaseId(null);
-    setView("cases");
-    setStatusFilter(null);
   }
 
   const selectedCase = selectedCaseId ? cases.find((c) => c.id === selectedCaseId) : null;
@@ -235,13 +260,14 @@ export default function App() {
           <h1 className="text-base font-medium" style={{ color: colors.black }}>Resolve</h1>
         </div>
         <div className="p-4 md:p-[59px] flex-1">
-          {view === "getstarted" && <GetStarted onStart={() => handleSelectStatus(null)} />}
+          {view === "getstarted" && <GetStarted onStart={handleGetNextCase} />}
           {view === "cases" && (
             <CaseListView
               cases={cases}
               statusFilter={statusFilter}
               selectedCaseId={selectedCaseId}
               onSelectCase={setSelectedCaseId}
+              onGetNextCase={handleGetNextCase}
               onCreateCase={handleCreateCase}
               kbCount={kb.length}
               onGoToKb={() => handleNavigate("kb")}
@@ -260,7 +286,9 @@ export default function App() {
           onSendMessage={handleSendMessage}
           onChangeStatus={handleChangeStatus}
           onRefresh={handleRefreshCase}
-          onNewCase={handleNewCase}
+          onNewCase={handleGetNextCase}
+          onSendEmail={handleSendEmail}
+          onUpdateCustomerEmail={handleUpdateCustomerEmail}
           resizeHandleProps={resizeHandleProps}
         />
       </div>

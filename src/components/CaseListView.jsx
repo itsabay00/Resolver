@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CaretRight, CircleNotch, FolderPlus, Share, Folder, FolderUser, Tray } from "@phosphor-icons/react";
+import { CaretRight, CircleNotch, FolderPlus, Share, Folder, FolderUser, Tray, MagicWand } from "@phosphor-icons/react";
 import { colors } from "../lib/colors.js";
 import { truncate } from "../lib/kb.js";
 import { Card, IconPill, OutlinePill, PrimaryButton, Banner, EmptyState } from "./ui.jsx";
@@ -10,6 +10,38 @@ const STATUS_ICON = {
   Closed: Folder,
   "Waiting for Customer": FolderUser,
 };
+
+function GetNextCaseCard({ onGetNextCase }) {
+  const [searching, setSearching] = useState(false);
+
+  async function handleClick() {
+    setSearching(true);
+    await onGetNextCase();
+    setSearching(false);
+  }
+
+  return (
+    <Card className="p-5 sm:p-6 flex items-center justify-between gap-4">
+      <div>
+        <p className="text-sm font-medium" style={{ color: colors.black }}>Get the next case</p>
+        <p className="text-xs mt-1" style={{ color: colors.gray }}>
+          Pulls the next case waiting to be worked. The assistant starts preparing a response right away.
+        </p>
+      </div>
+      <PrimaryButton onClick={handleClick} disabled={searching} className="shrink-0">
+        {searching ? (
+          <>
+            <CircleNotch className="w-4 h-4 animate-spin" /> Finding…
+          </>
+        ) : (
+          <>
+            <MagicWand className="w-4 h-4" /> Get next case
+          </>
+        )}
+      </PrimaryButton>
+    </Card>
+  );
+}
 
 export function NewCaseForm({ onCreate, kbCount, onGoToKb, autoFocus }) {
   const [message, setMessage] = useState("");
@@ -34,7 +66,7 @@ export function NewCaseForm({ onCreate, kbCount, onGoToKb, autoFocus }) {
 
   return (
     <Card className="p-5 sm:p-6">
-      <label className="block text-sm font-medium mb-2" style={{ color: colors.black }}>New case</label>
+      <label className="block text-sm font-medium mb-2" style={{ color: colors.black }}>Paste a case manually</label>
       <textarea
         autoFocus={autoFocus}
         value={message}
@@ -97,19 +129,28 @@ export function CaseCard({ item, selected, onClick }) {
   );
 }
 
-export default function CaseListView({ cases, statusFilter, selectedCaseId, onSelectCase, onCreateCase, kbCount, onGoToKb, focusForm }) {
+export default function CaseListView({ cases, statusFilter, selectedCaseId, onSelectCase, onGetNextCase, onCreateCase, kbCount, onGoToKb, focusForm }) {
+  const [showManual, setShowManual] = useState(false);
   const filtered = statusFilter ? cases.filter((c) => c.status === statusFilter) : cases;
 
   return (
     <div className="flex flex-col gap-6">
-      <NewCaseForm onCreate={onCreateCase} kbCount={kbCount} onGoToKb={onGoToKb} autoFocus={focusForm} />
+      <GetNextCaseCard onGetNextCase={onGetNextCase} />
+
+      {showManual ? (
+        <NewCaseForm onCreate={onCreateCase} kbCount={kbCount} onGoToKb={onGoToKb} autoFocus={focusForm} />
+      ) : (
+        <button onClick={() => setShowManual(true)} className="text-xs font-medium underline self-start" style={{ color: colors.gray }}>
+          Or paste a specific case manually
+        </button>
+      )}
 
       <div>
         <p className="text-xs font-medium mb-3" style={{ color: colors.gray }}>
           {statusFilter ? statusFilter : "All cases"}
         </p>
         {filtered.length === 0 ? (
-          <EmptyState icon={Tray} title="No cases here yet" description={statusFilter ? `Nothing marked "${statusFilter}" yet.` : "Start one above to see it here."} />
+          <EmptyState icon={Tray} title="No cases here yet" description={statusFilter ? `Nothing marked "${statusFilter}" yet.` : "Get the next case above to see it here."} />
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((c) => (
@@ -121,3 +162,4 @@ export default function CaseListView({ cases, statusFilter, selectedCaseId, onSe
     </div>
   );
 }
+

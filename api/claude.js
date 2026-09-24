@@ -39,6 +39,27 @@ function classifyOpenAIError(status, data) {
   return { code: "unknown", message: message || "That request didn't go through. Try again." };
 }
 
+// Messages from the frontend use a neutral content shape for images —
+// { type: "image", mediaType, data } — translated here into whichever
+// provider's own format is needed.
+function toAnthropicContent(content) {
+  if (typeof content === "string") return content;
+  return content.map((block) =>
+    block.type === "image"
+      ? { type: "image", source: { type: "base64", media_type: block.mediaType, data: block.data } }
+      : block
+  );
+}
+
+function toOpenAIContent(content) {
+  if (typeof content === "string") return content;
+  return content.map((block) =>
+    block.type === "image"
+      ? { type: "image_url", image_url: { url: `data:${block.mediaType};base64,${block.data}` } }
+      : block
+  );
+}
+
 async function callAnthropic(apiKey, system, messages, maxTokens) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -51,7 +72,7 @@ async function callAnthropic(apiKey, system, messages, maxTokens) {
       model: "claude-sonnet-5",
       max_tokens: maxTokens || 1000,
       system: system || undefined,
-      messages,
+      messages: messages.map((m) => ({ role: m.role, content: toAnthropicContent(m.content) })),
     }),
   });
   const data = await res.json().catch(() => ({}));
@@ -70,7 +91,7 @@ async function callAnthropic(apiKey, system, messages, maxTokens) {
 async function callOpenAI(apiKey, system, messages, maxTokens) {
   const openaiMessages = [
     ...(system ? [{ role: "system", content: system }] : []),
-    ...messages.map((m) => ({ role: m.role, content: m.content })),
+    ...messages.map((m) => ({ role: m.role, content: toOpenAIContent(m.content) })),
   ];
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
