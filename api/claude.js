@@ -20,15 +20,15 @@ function classifyAnthropicError(status, data) {
   return { code: "unknown", message: message || "That request didn't go through. Try again." };
 }
 
-function classifyOpenAIError(status, data) {
+function classifyOpenAICompatibleError(status, data, providerLabel, billingUrl, keyEnvVar) {
   const message = (data && data.error && data.error.message) || "";
   const type = (data && data.error && data.error.type) || (data && data.error && data.error.code) || "";
 
-  if (status === 429 && /quota/i.test(type + message)) {
-    return { code: "insufficient_credits", message: "Out of API credits — add more at platform.openai.com/settings/billing" };
+  if (status === 429 && /quota|credit/i.test(type + message)) {
+    return { code: "insufficient_credits", message: `Out of ${providerLabel} credits — check ${billingUrl}` };
   }
-  if (status === 401 || /invalid_api_key/i.test(type)) {
-    return { code: "invalid_key", message: "The OpenAI API key isn't valid. Check OPENAI_API_KEY in your Vercel project settings." };
+  if (status === 401 || /invalid_api_key|unauthorized/i.test(type + message)) {
+    return { code: "invalid_key", message: `The ${providerLabel} API key isn't valid. Check ${keyEnvVar} in your Vercel project settings.` };
   }
   if (status === 429) {
     return { code: "rate_limited", message: "Too many requests right now — wait a few seconds and try again." };
@@ -51,7 +51,7 @@ function toAnthropicContent(content) {
   );
 }
 
-function toOpenAIContent(content) {
+function toOpenAIStyleContent(content) {
   if (typeof content === "string") return content;
   return content.map((block) =>
     block.type === "image"
@@ -88,30 +88,63 @@ async function callAnthropic(apiKey, system, messages, maxTokens) {
   return { ok: true, text };
 }
 
-async function callOpenAI(apiKey, system, messages, maxTokens) {
-  const openaiMessages = [
+// Shared by OpenAI and NVIDIA Build — NVIDIA's hosted endpoint speaks the
+// same Chat Completions format, so one function serves both.
+async function callOpenAICompatible({ apiKey, baseUrl, model, system, messages, maxTokens, providerLabel, billingUrl, keyEnvVar }) {
+  const chatMessages = [
     ...(system ? [{ role: "system", content: system }] : []),
-    ...messages.map((m) => ({ role: m.role, content: toOpenAIContent(m.content) })),
+    ...messages.map((m) => ({ role: m.role, content: toOpenAIStyleContent(m.content) })),
   ];
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o",
+      model,
       max_tokens: maxTokens || 1000,
-      messages: openaiMessages,
+      messages: chatMessages,
     }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const classified = classifyOpenAIError(res.status, data);
+    const classified = classifyOpenAICompatibleError(res.status, data, providerLabel, billingUrl, keyEnvVar);
     return { ok: false, status: res.status, ...classified };
   }
   const text = ((data.choices || [])[0]?.message?.content || "").trim();
   return { ok: true, text };
+}
+
+async function callOpenAI(apiKey, system, messages, maxTokens) {
+  return callOpenAICompatible({
+    apiKey,
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o",
+    system,
+    messages,
+    maxTokens,
+    providerLabel: "OpenAI",
+    billingUrl: "platform.openai.com/settings/billing",
+    keyEnvVar: "OPENAI_API_KEY",
+  });
+}
+
+async function callNvidia(apiKey, system, messages, maxTokens) {
+  // NVIDIA Build (build.nvidia.com) hosts open models behind an
+  // OpenAI-compatible endpoint — free to use with a developer account.
+  // Swap the model for anything else in the catalog if you'd like.
+  return callOpenAICompatible({
+    apiKey,
+    baseUrl: "https://integrate.api.nvidia.com/v1",
+    model: "meta/llama-3.3-70b-instruct",
+    system,
+    messages,
+    maxTokens,
+    providerLabel: "NVIDIA Build",
+    billingUrl: "build.nvidia.com",
+    keyEnvVar: "NVIDIA_API_KEY",
+  });
 }
 
 export default async function handler(req, res) {
@@ -120,13 +153,14 @@ export default async function handler(req, res) {
     return;
   }
 
-  // Uses whichever key is configured — Anthropic first if both are set.
+  // Uses whichever key is configured — checked in this order if more than one is set.
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
+  const nvidiaKey = process.env.NVIDIA_API_KEY;
 
-  if (!anthropicKey && !openaiKey) {
+  if (!anthropicKey && !openaiKey && !nvidiaKey) {
     res.status(500).json({
-      error: "No AI provider is configured. Add ANTHROPIC_API_KEY or OPENAI_API_KEY in your Vercel project's Environment Variables, then redeploy.",
+      error: "No AI provider is configured. Add ANTHROPIC_API_KEY, OPENAI_API_KEY, or NVIDIA_API_KEY in your Vercel project's Environment Variables, then redeploy.",
       code: "missing_key",
     });
     return;
@@ -141,7 +175,9 @@ export default async function handler(req, res) {
   try {
     const result = anthropicKey
       ? await callAnthropic(anthropicKey, system, messages, maxTokens)
-      : await callOpenAI(openaiKey, system, messages, maxTokens);
+      : openaiKey
+      ? await callOpenAI(openaiKey, system, messages, maxTokens)
+      : await callNvidia(nvidiaKey, system, messages, maxTokens);
 
     if (!result.ok) {
       res.status(result.status || 500).json({ error: result.message, code: result.code });

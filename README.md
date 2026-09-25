@@ -6,8 +6,8 @@ Sidebar (280px), case list, and a resizable AI Assistant panel (400px default) �
 
 - **Frontend:** React + Vite, Tailwind via CDN, Lexend from Google Fonts, icons from `@phosphor-icons/react` (matching the exact glyphs named in the Figma file — Confetti, Book, GearSix, and so on). Responsive: all three panels on desktop (sidebar collapses to an icon rail, AI panel is drag-resizable from its left edge), one screen at a time on mobile (sidebar becomes a drawer, selecting a case opens full-screen chat).
 - **The case queue.** "Get next case" pulls from a small set of realistic simulated cases (`src/lib/seedCases.js`) instead of asking the advisor to type one in — a stand-in for a real inbox or contact form. The moment a case is pulled, the assistant starts reading it and preparing a response automatically; nothing to click to kick that off.
-- **Backend:** one Vercel serverless function, `api/claude.js`. It uses whichever AI key is configured — `ANTHROPIC_API_KEY` first, `OPENAI_API_KEY` as a fallback — so the app isn't locked to one provider. Errors are classified specifically for whichever provider answered: bad connection, exhausted credits, invalid key, rate-limited, provider servers down — each gets its own message, styled with the semantic colors (error `#FF4B49`/`#FFEDED`, warning `#FEBE00`/`#FFF8E5`, success `#01C15A`/`#E6F9EF`, info `#219BFF`/`#E9F5FF`).
-- **Sending to customers:** a second function, `api/send-email.js`, sends the reply for real via Resend once `RESEND_API_KEY` is set — see "Known limits" for the one restriction that applies until a domain is verified.
+- **Backend:** one Vercel serverless function, `api/claude.js`. It uses whichever AI key is configured — `ANTHROPIC_API_KEY`, then `OPENAI_API_KEY`, then `NVIDIA_API_KEY` (build.nvidia.com — OpenAI-compatible, free tier available) — so the app isn't locked to one provider. Errors are classified specifically for whichever provider answered: bad connection, exhausted credits, invalid key, rate-limited, provider servers down — each gets its own message, styled with the semantic colors (error `#FF4B49`/`#FFEDED`, warning `#FEBE00`/`#FFF8E5`, success `#01C15A`/`#E6F9EF`, info `#219BFF`/`#E9F5FF`).
+- **Sending to customers:** free by default — "Open in email app" builds a `mailto:` link with the reply pre-filled, no setup or account needed. A second, optional "Send directly" button will send for real once `RESEND_API_KEY` is set (see below); until then it just explains that plainly instead of failing oddly.
 - **Images:** the paperclip in chat attaches a real image, which the AI actually reads (Claude/GPT-4o vision) — the frontend sends a provider-neutral shape and the backend translates it for whichever provider is active.
 - **Storage:** browser `localStorage`. Each device/browser keeps its own knowledge base and cases (see "Known limits").
 - **Statuses:** every case is New, Transferred, Waiting for Customer, or Closed — changeable from the chat panel, filterable from the sidebar.
@@ -30,9 +30,7 @@ Note: plain `vite dev` does **not** run the `/api` serverless function, so the A
 1. Push this code to GitHub (see the section below).
 2. Go to [vercel.com/new](https://vercel.com/new) and import the `Customer-Service-Resolver` repo.
 3. Vercel auto-detects it as a Vite project — leave the build settings on default.
-4. **Before** clicking Deploy, add environment variables:
-   - `ANTHROPIC_API_KEY` (<https://console.anthropic.com/settings/keys>) **or** `OPENAI_API_KEY` (<https://platform.openai.com/api-keys>) — pick one
-   - `RESEND_API_KEY` (<https://resend.com>) if you want "Send to customer" to actually send — optional, the rest of the app works without it
+4. **Before** clicking Deploy, add ONE AI provider key — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `NVIDIA_API_KEY` (free tier at build.nvidia.com). Everything else, including sending replies, works with no other setup.
 5. Click **Deploy**. You'll get a live `*.vercel.app` URL to share with testers.
 6. From then on, every `git push` to `main` auto-redeploys.
 
@@ -50,8 +48,8 @@ git push -u origin main
 
 - **Not shared across a team yet.** The knowledge base and cases live in each browser's `localStorage`. A shared version needs a small real database (e.g. Vercel KV or Supabase) instead — worth doing once you've validated the concept with real users.
 - **Cases are simulated.** "Get next case" pulls from a fixed example set (`src/lib/seedCases.js`), not a real inbox. Swapping in a real channel (a connected email inbox, a contact form) is a separate, bigger task — same shape as connecting the AI key was.
-- **Email sending needs a verified domain to reach real customers.** With just `RESEND_API_KEY` set, Resend's shared test address can only send to the email address that signed up for the account — good enough to try the flow, not to reach a real customer. Verify a domain at resend.com/domains and set `EMAIL_FROM` to send for real.
-- **Only Anthropic and OpenAI are wired up.** True "any provider" isn't achievable — each has its own request format — but more can be added the same way these two were, in `api/claude.js`.
+- **Email sending is free by default, real sending is optional.** "Open in email app" needs nothing — it's a `mailto:` link. If you want the platform to send on its own, set `RESEND_API_KEY` (and optionally `EMAIL_FROM`) — but note Resend's shared test address can then only deliver to the email that signed up for the account, until a domain is verified at resend.com/domains.
+- **Only Anthropic, OpenAI, and NVIDIA Build are wired up.** True "any provider" isn't achievable — each has its own request format — but more can be added the same way these were, in `api/claude.js`.
 - **Real API usage.** Every case pulled and every chat message is a real, billed API call. Anthropic usage: <https://console.anthropic.com/settings/usage>. OpenAI usage: <https://platform.openai.com/usage>.
 - **Customer data.** Case text and any attached images are sent to whichever AI provider is configured. Keep that in mind if you're testing with real customer messages.
 - **@ mentions are still a placeholder.** Image attachments work; the @ button doesn't yet.

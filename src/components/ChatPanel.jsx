@@ -130,7 +130,18 @@ export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefre
     setEmailOpen(true);
   }
 
-  async function handleSendEmailClick() {
+  function buildMailto() {
+    const params = new URLSearchParams({ subject: emailSubject, body: emailBody });
+    return `mailto:${encodeURIComponent(emailTo.trim())}?${params.toString()}`;
+  }
+
+  function handleOpenInEmailApp() {
+    if (!emailTo.trim() || !emailBody.trim()) return;
+    window.location.href = buildMailto();
+    onUpdateCustomerEmail(item.id, emailTo.trim());
+  }
+
+  async function handleSendDirectly() {
     if (!emailTo.trim() || !emailBody.trim() || emailSending) return;
     setEmailSending(true);
     setEmailError(null);
@@ -139,7 +150,11 @@ export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefre
       onUpdateCustomerEmail(item.id, emailTo.trim());
       setEmailSent(true);
     } catch (err) {
-      setEmailError(err.message || "Couldn't send that. Try again.");
+      if (err.code === "missing_email_key") {
+        setEmailError("Direct sending isn't set up yet — use \"Open in email app\" instead, or add RESEND_API_KEY later if you want this to send on its own.");
+      } else {
+        setEmailError(err.message || "Couldn't send that. Try again.");
+      }
     } finally {
       setEmailSending(false);
     }
@@ -215,9 +230,12 @@ export default function ChatPanel({ item, onSendMessage, onChangeStatus, onRefre
               <textarea value={emailBody} onChange={(e) => setEmailBody(e.target.value)} rows={4} className="w-full rounded-lg p-2 text-sm resize-none rsv-input" />
               {emailError && <Banner kind="error" message={emailError} />}
               {emailSent && <Banner kind="success" message="Sent." />}
-              <div className="flex justify-end">
-                <PrimaryButton onClick={handleSendEmailClick} disabled={!emailTo.trim() || !emailBody.trim() || emailSending}>
-                  {emailSending ? "Sending…" : "Send email"}
+              <div className="flex items-center justify-between">
+                <GhostButton onClick={handleSendDirectly} disabled={!emailTo.trim() || !emailBody.trim() || emailSending}>
+                  {emailSending ? "Sending…" : "Send directly (needs setup)"}
+                </GhostButton>
+                <PrimaryButton onClick={handleOpenInEmailApp} disabled={!emailTo.trim() || !emailBody.trim()}>
+                  Open in email app
                 </PrimaryButton>
               </div>
             </div>
